@@ -98,12 +98,12 @@ var (
 	ContractDeployerAllowListAddress = common.HexToAddress("0x0200000000000000000000000000000000000000")
 	ContractNativeMinterAddress      = common.HexToAddress("0x0200000000000000000000000000000000000001")
 	TxAllowListAddress               = common.HexToAddress("0x0200000000000000000000000000000000000002")
-+   ContractXchainECRecoverAddress   = common.HexToAddress("0x0300000000000000000000000000000000000000")
++   	ContractXchainECRecoverAddress   = common.HexToAddress("0x0300000000000000000000000000000000000000")
 	UsedAddresses = []common.Address{
 		ContractDeployerAllowListAddress,
 		ContractNativeMinterAddress,
 		TxAllowListAddress,
-+       ContractXchainECRecoverAddress,
++       	ContractXchainECRecoverAddress,
 	}
 )
 ```
@@ -211,9 +211,9 @@ func (c *ChainConfig) enabledStatefulPrecompiles() []precompile.StatefulPrecompi
 	if c.ContractDeployerAllowListConfig.Timestamp() != nil {
 		statefulPrecompileConfigs = append(statefulPrecompileConfigs, &c.ContractDeployerAllowListConfig)
 	}
-    .....
-    .....
-+   if c.ContractXChainECRecoverConfig.Timestamp() != nil {
+    	.....
+    	.....
++   	if c.ContractXChainECRecoverConfig.Timestamp() != nil {
 + 		statefulPrecompileConfigs = append(statefulPrecompileConfigs, &c.ContractXChainECRecoverConfig)
 + 	}
 }
@@ -223,8 +223,8 @@ next, at [line 496](./params/config.go#L496) we have introduced a boolean variab
 ```diff
 type Rules struct {
 	ChainID                                                 *big.Int
-  .....
-  .....
+  	.....
+  	.....
 
 	// Optional stateful precompile rules
 	IsContractDeployerAllowListEnabled bool
