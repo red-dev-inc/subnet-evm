@@ -4,11 +4,14 @@
 package precompile
 
 import (
+	"crypto/sha256"
 	"math/big"
 
-	"github.com/ava-labs/subnet-evm/vmerrs"
+	"github.com/btcsuite/btcutil/bech32"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
+	"golang.org/x/crypto/ripemd160"
 )
 
 var (
@@ -16,8 +19,8 @@ var (
 	// Singleton StatefulPrecompiledContract for XChain ECRecover.
 	ContractXChainECRecoverPrecompile StatefulPrecompiledContract = createXChainECRecoverPrecompile(ContractXchainECRecoverAddress)
 
-	xChainECRecoverSignature = CalculateFunctionSelector("xChainECRecover(string)") // address, amount
-	xChainECRecoverReadSignature = CalculateFunctionSelector("getXChainECRecover(string)")
+	xChainECRecoverSignature     = CalculateFunctionSelector("xChainECRecover(string)") // address, amount
+	xChainECRecoverReadSignature = CalculateFunctionSelector("getXChainECRecover(bytes32,uint8,bytes32,bytes32)")
 )
 
 // ContractXChainECRecoverConfig uses it to implement the StatefulPrecompileConfig
@@ -37,33 +40,86 @@ func (c *ContractXChainECRecoverConfig) Contract() StatefulPrecompiledContract {
 
 // Configure configures [state] with the desired admins based on [c].
 func (c *ContractXChainECRecoverConfig) Configure(state StateDB) {
-	
+
 }
 
 func (c *ContractXChainECRecoverConfig) Timestamp() *big.Int { return c.BlockTimestamp }
 
+func allZero(b []byte) bool {
+	for _, byte := range b {
+		if byte != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // getXChainECRecover returns an execution function that reads the input and return the input from the given [precompileAddr].
 // The execution function parses the input into a string and returns the string
 func getXChainECRecover(precompileAddr common.Address) RunStatefulPrecompileFunc {
-	log.Info("Reached 2 1");
+	log.Info("Reached 2 1")
 	return func(evm PrecompileAccessibleState, callerAddr common.Address, addr common.Address, input []byte, suppliedGas uint64, readOnly bool) (ret []byte, remainingGas uint64, err error) {
 		if remainingGas, err = deductGas(suppliedGas, XChainECRecoverCost); err != nil {
 			return nil, 0, err
 		}
-		log.Info("Reached 2 2");
-		log.Info(string(input[:]));
+		const ecRecoverInputLength = 128
 
-		out := []byte(string(input[:]))
-		return out, remainingGas, nil
+		input = common.RightPadBytes(input, ecRecoverInputLength)
+
+		// "input" is (hash, v, r, s), each 32 bytes
+		// but for ecrecover we want (r, s, v)
+
+		r := new(big.Int).SetBytes(input[64:96])
+		s := new(big.Int).SetBytes(input[96:128])
+		v := input[63]
+
+		// tighter sig s values input homestead only apply to tx sigs
+		if !allZero(input[32:63]) || !crypto.ValidateSignatureValues(v, r, s, false) {
+			return nil, remainingGas, nil
+		}
+
+		// We must make sure not to modify the 'input', so placing the 'v' along with
+		// the signature needs to be done on a new allocation
+
+		sig := make([]byte, 65)
+		copy(sig, input[64:128])
+		sig[64] = v
+
+		// v needs to be at the end for libsecp256k1
+		pubk, err := crypto.SigToPub(input[:32], sig)
+		publicKey := crypto.CompressPubkey(pubk)
+
+		// make sure the public key is a valid one
+		if err != nil {
+			return nil, remainingGas, nil
+		}
+
+		sha := sha256.Sum256(publicKey)
+		ripemd := ripemd160.New()
+		ripemd.Write(sha[:])
+		ripe := ripemd.Sum(nil)
+
+		conv, err := bech32.ConvertBits(ripe, 8, 5, true)
+		if err != nil {
+			log.Info("Error:", err)
+		}
+		encoded, err := bech32.Encode("fuji", conv)
+		xchain := "X-" + encoded
+		log.Info(xchain)
+
+		if err != nil {
+			log.Info("Error:", err)
+		}
+		return []byte(xchain), remainingGas, nil
 	}
 }
 
 // createXChainECRecoverPrecompile returns a StatefulPrecompiledContract with R/W control of an allow list at [precompileAddr] and a native coin minter.
 func createXChainECRecoverPrecompile(precompileAddr common.Address) StatefulPrecompiledContract {
-	log.Info("Reached 1");
+	log.Info("Reached 1")
 	funcGetXChainECRecover := newStatefulPrecompileFunction(xChainECRecoverReadSignature, getXChainECRecover(precompileAddr))
 
 	// Construct the contract with no fallback function.
-	contract := newStatefulPrecompileWithFunctionSelectors(nil, []*statefulPrecompileFunction{xChainECRecover,funcGetXChainECRecover})
+	contract := newStatefulPrecompileWithFunctionSelectors(nil, []*statefulPrecompileFunction{funcGetXChainECRecover})
 	return contract
 }

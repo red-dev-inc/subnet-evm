@@ -1,16 +1,17 @@
 # Introduction
 
-This tutorial will show you how to add a Precompile contracts to the subnet-evm.
+This tutorial will show you how to add a Precompile contracts to the subnet-evm and use that Precompile to verify the signature of a message like this that has been signed using the Avalanche Wallet.
 
-We at [red·dev](https://www.red.dev) needed to do learn how to do this for our current software project under development, [RediYeti](https://www.rediyeti.com). In our case, we needed our dApp (on the C-Chain) to gather information from the Avalanche P-Chain, and because Avalanche does not allow this natively, we built a Chainlink adapter to do this job. 
+We at [red·dev](https://www.red.dev) needed to do this for our current software project under development, [RediYeti](https://www.rediyeti.com). We have a use-case where we need to verify ownership of an Avalanche X-Chain address before the dApp sends funds related to this address. To prevent fraud, the verification must take place inside of the dApp.
 
-You, however, can follow this same methodology to gather any real-world information that your dApp needs, by following this tutorial and just designing your Chainlink adapter to gather different information.
+If you're already a Solidity coder, you might think that there is an easier way to do this using the EVM's built-in function ecrecover. However, there is one small hitch that makes using ecrecover impossible: it uses a different hashing method. While Avalanche uses SHA-256 followed by ripemd160, the EVM uses Keccak-256. 
+
+Previously, we did one [tutorial](https://docs.avax.network/community/tutorials-contest/red-dev-sig-verify-tutorial) on the same concept using solidity. But we think it will be better to make a Precompile, which works similarly to ecrecover() and less expensive than a huge solidy code.
 
 In this tutorial, we describe each step of setting up the environment by hand. For more information, see the **Resources** section at the end of this tutorial.
 
 ## Audience
 To get the most out of this tutorial, you will need to have a basic understanding of Docker, Chainlink, Javascript, Node, Solidity, and how to write dApps. If you do not yet know about these topics, see the [**Resources**](#resources) section at the end for links to learn more.
-
 
 ## Overview
 
@@ -125,10 +126,13 @@ The getXChainECRecover() function holds the business logic for verify the signat
 package precompile
 
 import (
+	"crypto/sha256"
 	"math/big"
 
-	"github.com/ava-labs/subnet-evm/vmerrs"
+	"github.com/btcsuite/btcutil/bech32"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
+	"golang.org/x/crypto/ripemd160"
 )
 
 var (
@@ -136,7 +140,7 @@ var (
 	// Singleton StatefulPrecompiledContract for XChain ECRecover.
 	ContractXChainECRecoverPrecompile StatefulPrecompiledContract = createXChainECRecoverPrecompile(ContractXchainECRecoverAddress)
 
-	xChainECRecoverReadSignature = CalculateFunctionSelector("getXChainECRecover(string)")
+	xChainECRecoverReadSignature = CalculateFunctionSelector("getXChainECRecover(bytes32,uint8,bytes32,bytes32)")
 )
 
 // ContractXChainECRecoverConfig uses it to implement the StatefulPrecompileConfig
@@ -161,6 +165,15 @@ func (c *ContractXChainECRecoverConfig) Configure(state StateDB) {
 
 func (c *ContractXChainECRecoverConfig) Timestamp() *big.Int { return c.BlockTimestamp }
 
+func allZero(b []byte) bool {
+	for _, byte := range b {
+		if byte != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // getXChainECRecover returns an execution function that reads the input and return the input from the given [precompileAddr].
 // The execution function parses the input into a string and returns the string
 func getXChainECRecover(precompileAddr common.Address) RunStatefulPrecompileFunc {
@@ -169,8 +182,55 @@ func getXChainECRecover(precompileAddr common.Address) RunStatefulPrecompileFunc
 			return nil, 0, err
 		}
 
-		out := []byte(string(input[:]))
-		return out, remainingGas, nil
+		const ecRecoverInputLength = 128
+
+		input = common.RightPadBytes(input, ecRecoverInputLength)
+
+		// "input" is (hash, v, r, s), each 32 bytes
+		// but for ecrecover we want (r, s, v)
+
+		r := new(big.Int).SetBytes(input[64:96])
+		s := new(big.Int).SetBytes(input[96:128])
+		v := input[63]
+
+		// tighter sig s values input homestead only apply to tx sigs
+		if !allZero(input[32:63]) || !crypto.ValidateSignatureValues(v, r, s, false) {
+			return nil, remainingGas, nil
+		}
+
+		// We must make sure not to modify the 'input', so placing the 'v' along with
+		// the signature needs to be done on a new allocation
+
+		sig := make([]byte, 65)
+		copy(sig, input[64:128])
+		sig[64] = v
+
+		// v needs to be at the end for libsecp256k1
+		pubk, err := crypto.SigToPub(input[:32], sig)
+		publicKey := crypto.CompressPubkey(pubk)
+
+		// make sure the public key is a valid one
+		if err != nil {
+			return nil, remainingGas, nil
+		}
+
+		sha := sha256.Sum256(publicKey)
+		ripemd := ripemd160.New()
+		ripemd.Write(sha[:])
+		ripe := ripemd.Sum(nil)
+
+		conv, err := bech32.ConvertBits(ripe, 8, 5, true)
+		if err != nil {
+			log.Info("Error:", err)
+		}
+		encoded, err := bech32.Encode("fuji", conv)
+		xchain := "X-" + encoded
+
+		if err != nil {
+			log.Info("Error:", err)
+		}
+
+		return []byte(xchain), remainingGas, nil
 	}
 }
 
@@ -421,15 +481,11 @@ You can create a new metamask account by importing the private key `0x56289e99c9
 
 You can copy paste the Solidity interface [contract_xchain_ecrecover.sol](./precompile/contract_xchain_ecrecover.sol) into Remix and compile it by hitting “Compile contract_xchain_ecrecover.sol”.
 
-TODO
-
-
 Once you’ve compiled the interface, you can navigate to the Deploy tab in remix, select “Injected Web3” for your local environment so that you can interact with your EVM instance, and paste the address 0x0300000000000000000000000000000000000000 of the precompile in the field to the right of “At Address”.
 
-TODO
-
-
 Clicking “At Address” will deploy the interface at that address, as if you had deployed a fully implemented contract in Solidity and from there you can interact with the precompile directly in Solidity.
+
+As input to the getXChainECRecover() function, pass prefixed hashed message, r, s and v from the signature as arguments. The function will return the X-chain address which signed the message.
 
 # Resources
 Here is a list of resources that can give you a detailed idea of what is mentioned in this tutorial.
