@@ -1,6 +1,6 @@
 # Introduction
 
-This tutorial will show you how to add a Precompile contracts to the subnet-evm and use that Precompile to verify the signature of a message like this that has been signed using the Avalanche Wallet.
+This tutorial will show you how to add a Precompile contract to the subnet-evm and use that Precompile to verify the signature of a message like this that has been signed using the Avalanche Wallet.
 
 We at [red·dev](https://www.red.dev) needed to do this for our current software project under development, [RediYeti](https://www.rediyeti.com). We have a use-case where we need to verify ownership of an Avalanche X-Chain address before the dApp sends funds related to this address. To prevent fraud, the verification must take place inside of the dApp.
 
