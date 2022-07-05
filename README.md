@@ -1,4 +1,4 @@
-# Introduction
+# How to extend Avalanche's subnet-evm with a stateful precompile
 
 This tutorial will show you how to extend Avalanche's subnet-evm with custom functionality. It adds a novel stateful precompile contract to verify the X-Chain signature of a message that has been signed using the Avalanche Wallet or by other means.
 
